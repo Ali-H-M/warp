@@ -77,7 +77,9 @@ use crate::code_review::comments::{CommentId, CommentOrigin};
 use crate::editor::InteractionState;
 use crate::features::FeatureFlag;
 use crate::notebooks::editor::rich_text_styles;
-use crate::settings::{AppEditorSettings, CodeEditorLineNumberMode, FontSettings};
+use crate::settings::{
+    AppEditorSettings, CodeEditorLineNumberMode, FontSettings, SyntaxThemeSettings,
+};
 use crate::view_components::find::FindDirection;
 
 mod actions;
@@ -306,6 +308,10 @@ impl CodeEditorView {
             me.handle_appearance_or_font_change(ctx);
         });
         ctx.subscribe_to_model(&font_settings_handle, |me, _, _, ctx| {
+            me.handle_appearance_or_font_change(ctx);
+        });
+        let syntax_theme_settings_handle = SyntaxThemeSettings::handle(ctx);
+        ctx.subscribe_to_model(&syntax_theme_settings_handle, |me, _, _, ctx| {
             me.handle_appearance_or_font_change(ctx);
         });
         let app_editor_settings_handle = AppEditorSettings::handle(ctx);

@@ -1,4 +1,6 @@
 mod dark_modern;
+mod light_modern;
+mod preset_color;
 mod queries;
 use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -8,6 +10,7 @@ use arborium::tree_sitter::{InputEdit, Parser, Tree};
 pub use dark_modern::DARK_MODERN;
 use futures::stream::AbortHandle;
 use languages::Language;
+pub use light_modern::LIGHT_MODERN;
 use parking_lot::Mutex;
 use queries::highlight_query::HighlightQuery;
 pub use queries::highlight_query::{ColorMap, TextSlice};

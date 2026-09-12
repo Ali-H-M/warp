@@ -1,10 +1,5 @@
-use warpui_core::color::ColorU;
-
 use crate::ColorMap;
-
-const fn hex(r: u8, g: u8, b: u8) -> ColorU {
-    ColorU { r, g, b, a: 255 }
-}
+use crate::preset_color::hex;
 
 /// `ColorMap` matching VS Code's built-in "Dark Modern" theme, which inherits its token colors
 /// from "Dark+". See `crates/syntax_tree/DARK_MODERN_LICENSE.md` for provenance.

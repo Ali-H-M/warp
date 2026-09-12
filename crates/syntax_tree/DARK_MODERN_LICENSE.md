@@ -1,7 +1,9 @@
-`src/dark_modern.rs`'s `DARK_MODERN` color values are derived from [Visual Studio Code](https://github.com/microsoft/vscode)'s
-built-in "Dark Modern" theme, which inherits its token colors from "Dark+"
-(`extensions/theme-defaults/themes/dark_modern.json` and `dark_plus.json`, which in turn extends
-`dark_vs.json`), pinned to commit `3addbda66f9e80c3ed1b943822ab823bb6747b02` (2026-09-12).
+`src/dark_modern.rs`'s `DARK_MODERN` and `src/light_modern.rs`'s `LIGHT_MODERN` color values are
+derived from [Visual Studio Code](https://github.com/microsoft/vscode)'s built-in "Dark Modern" and
+"Light Modern" themes, which inherit their token colors from "Dark+" / "Light+"
+(`extensions/theme-defaults/themes/{dark,light}_modern.json` and `{dark,light}_plus.json`, which in
+turn extend `{dark,light}_vs.json`), pinned to commit `3addbda66f9e80c3ed1b943822ab823bb6747b02`
+(2026-09-12).
 
 No files were copied; the hex color values were read from those theme JSON files and mapped onto
 this crate's own `ColorMap` fields (which are keyed by tree-sitter capture name, not by VS Code's
