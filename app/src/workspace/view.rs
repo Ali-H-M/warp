@@ -3121,7 +3121,7 @@ impl Workspace {
             me.handle_right_panel_event(event.clone(), ctx);
         });
         let code_review_hosted_in_left_panel =
-            *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left;
+            TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left;
         right_panel_view.update(ctx, |view, ctx| {
             view.set_hosted_in_left_panel(code_review_hosted_in_left_panel, ctx);
         });
@@ -4282,6 +4282,7 @@ impl Workspace {
                 },
                 LeftPanelDisplayedTab::WarpDrive => ToolPanelView::WarpDrive,
                 LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
+                LeftPanelDisplayedTab::CodeReview => ToolPanelView::CodeReview,
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
             lp.set_active_pane_group(pane_group.clone(), &self.working_directories_model, ctx);
@@ -6180,7 +6181,7 @@ impl Workspace {
 
     fn sync_code_review_panel_hosting(&mut self, ctx: &mut ViewContext<Self>) {
         let hosted_in_left_panel =
-            *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left;
+            TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left;
         self.right_panel_view.update(ctx, |view, ctx| {
             view.set_hosted_in_left_panel(hosted_in_left_panel, ctx);
         });
@@ -9783,7 +9784,7 @@ impl Workspace {
         });
 
         if should_open
-            && *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left
+            && TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left
         {
             panel_update_params.pane_group.update(ctx, |pane_group, _| {
                 pane_group.left_panel_open = true;
@@ -22992,7 +22993,7 @@ impl Workspace {
                 Some(ChildView::new(&self.left_panel_view).finish())
             }
             HeaderToolbarItemKind::CodeReview => {
-                if *TabSettings::as_ref(app).code_review_panel_position
+                if TabSettings::as_ref(app).code_review_panel_position
                     == CodeReviewPanelPosition::Left
                 {
                     return None;
@@ -23020,7 +23021,7 @@ impl Workspace {
         if !HeaderToolbarItemKind::CodeReview.is_supported(app) {
             return None;
         }
-        if *TabSettings::as_ref(app).code_review_panel_position == CodeReviewPanelPosition::Left {
+        if TabSettings::as_ref(app).code_review_panel_position == CodeReviewPanelPosition::Left {
             return None;
         }
         Some(Shrinkable::new(1.0, ChildView::new(&self.right_panel_view).finish()).finish())
@@ -23942,7 +23943,7 @@ impl Workspace {
         if *WarpDriveSettings::as_ref(ctx).enable_warp_drive {
             views.push(ToolPanelView::WarpDrive);
         }
-        if *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left {
+        if TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left {
             views.push(ToolPanelView::CodeReview);
         }
         views
