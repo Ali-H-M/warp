@@ -1,9 +1,11 @@
+mod dark_modern;
 mod queries;
 use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use arborium::tree_sitter::{InputEdit, Parser, Tree};
+pub use dark_modern::DARK_MODERN;
 use futures::stream::AbortHandle;
 use languages::Language;
 use parking_lot::Mutex;

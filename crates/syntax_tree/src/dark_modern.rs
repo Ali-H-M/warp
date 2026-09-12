@@ -1,0 +1,33 @@
+use warpui_core::color::ColorU;
+
+use crate::ColorMap;
+
+const fn hex(r: u8, g: u8, b: u8) -> ColorU {
+    ColorU { r, g, b, a: 255 }
+}
+
+/// `ColorMap` matching VS Code's built-in "Dark Modern" theme, which inherits its token colors
+/// from "Dark+". See `crates/syntax_tree/DARK_MODERN_LICENSE.md` for provenance.
+pub const DARK_MODERN: ColorMap = ColorMap {
+    keyword_color: hex(0x56, 0x9c, 0xd6),
+    keyword_control_color: hex(0xc5, 0x86, 0xc0),
+    function_color: hex(0xdc, 0xdc, 0xaa),
+    method_color: hex(0xdc, 0xdc, 0xaa),
+    string_color: hex(0xce, 0x91, 0x78),
+    escape_color: hex(0xd7, 0xba, 0x7d),
+    number_color: hex(0xb5, 0xce, 0xa8),
+    boolean_color: hex(0x56, 0x9c, 0xd6),
+    constant_color: hex(0x56, 0x9c, 0xd6),
+    type_color: hex(0x4e, 0xc9, 0xb0),
+    type_builtin_color: hex(0x4e, 0xc9, 0xb0),
+    comment_color: hex(0x6a, 0x99, 0x55),
+    property_color: hex(0x9c, 0xdc, 0xfe),
+    variable_color: hex(0x9c, 0xdc, 0xfe),
+    parameter_color: hex(0x9c, 0xdc, 0xfe),
+    tag_color: hex(0x56, 0x9c, 0xd6),
+    attribute_color: hex(0x9c, 0xdc, 0xfe),
+    punctuation_color: hex(0xd4, 0xd4, 0xd4),
+    operator_color: hex(0xd4, 0xd4, 0xd4),
+    namespace_color: hex(0x4e, 0xc9, 0xb0),
+    label_color: hex(0xc8, 0xc8, 0xc8),
+};

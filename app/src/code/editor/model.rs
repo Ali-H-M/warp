@@ -15,7 +15,7 @@ use line_ending::LineEnding;
 use num_traits::SaturatingSub;
 use rangemap::{RangeMap, RangeSet};
 use string_offset::CharOffset;
-use syntax_tree::{ColorMap, DecorationStateEvent, SyntaxTreeState};
+use syntax_tree::{ColorMap, DARK_MODERN, DecorationStateEvent, SyntaxTreeState};
 use vec1::{Vec1, vec1};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
@@ -74,7 +74,6 @@ use crate::code::editor::line_iterator::LineIterator;
 use crate::code_review::comments::{CommentId, CommentOrigin, LineDiffContent};
 use crate::editor::InteractionState;
 use crate::notebooks::editor::model::word_unit;
-use crate::themes::theme::AnsiColorIdentifier;
 use crate::util::link_detection::get_word_range_at_offset;
 
 /// An opaque handle to a stable line in the editor content, suitable for scroll
@@ -414,7 +413,7 @@ impl CodeEditorModel {
 
         let selection_model = ctx.add_model(|_ctx| BufferSelectionModel::new(content.clone()));
 
-        let color_map = Self::syntax_highlighting_color_map(ctx);
+        let color_map = Self::syntax_highlighting_color_map();
         let buffer_version = content.as_ref(ctx).buffer_version();
         let buffer_handle = content.downgrade();
         let syntax_tree =
@@ -1399,37 +1398,8 @@ impl CodeEditorModel {
         }
     }
 
-    fn syntax_highlighting_color_map(ctx: &mut ModelContext<Self>) -> ColorMap {
-        let appearance = Appearance::as_ref(ctx);
-        let terminal_color = appearance.theme().terminal_colors().normal;
-
-        // TODO: This mapping is not finalized. We still need to double check with design.
-        ColorMap {
-            keyword_color: AnsiColorIdentifier::Magenta
-                .to_ansi_color(&terminal_color)
-                .into(),
-            function_color: AnsiColorIdentifier::Blue
-                .to_ansi_color(&terminal_color)
-                .into(),
-            string_color: AnsiColorIdentifier::Green
-                .to_ansi_color(&terminal_color)
-                .into(),
-            type_color: AnsiColorIdentifier::Red
-                .to_ansi_color(&terminal_color)
-                .into(),
-            number_color: AnsiColorIdentifier::Green
-                .to_ansi_color(&terminal_color)
-                .into(),
-            comment_color: AnsiColorIdentifier::Yellow
-                .to_ansi_color(&terminal_color)
-                .into(),
-            property_color: AnsiColorIdentifier::Cyan
-                .to_ansi_color(&terminal_color)
-                .into(),
-            tag_color: AnsiColorIdentifier::Red
-                .to_ansi_color(&terminal_color)
-                .into(),
-        }
+    fn syntax_highlighting_color_map() -> ColorMap {
+        DARK_MODERN
     }
 
     pub fn text_decoration_for_ranges<'a>(
@@ -2543,7 +2513,7 @@ impl CodeEditorModel {
     }
 
     fn set_color_map(&self, ctx: &mut ModelContext<Self>) {
-        let color_map = Self::syntax_highlighting_color_map(ctx);
+        let color_map = Self::syntax_highlighting_color_map();
 
         self.syntax_tree.update(ctx, |syntax_tree, _ctx| {
             syntax_tree.set_color_map(color_map);
