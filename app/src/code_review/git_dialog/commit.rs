@@ -12,7 +12,6 @@ use warpui::elements::{
     Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Text,
 };
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
-use warpui::ui_components::switch::SwitchStateHandle;
 use warpui::{AppContext, SingletonEntity, ViewContext, ViewHandle};
 
 use crate::code_review::diff_state::CommitChainMode;
@@ -29,15 +28,19 @@ use crate::editor::{
     PropagateAndNoOpNavigationKeys, TextOptions,
 };
 use crate::ui_components::icons::Icon;
-use crate::util::git::{FileChangeEntry, PrInfo, get_file_change_entries};
-use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
+use crate::util::git::{
+    FileChangeEntry, PrInfo, get_staged_and_unstaged_file_change_entries, stage_all, unstage_all,
+};
+use crate::view_components::action_button::{ActionButton, ButtonSize, NakedTheme, SecondaryTheme};
 
 /// Commit-specific sub-actions, dispatched wrapped in `GitDialogAction::Commit`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommitSubAction {
     SetIntent(CommitChainMode),
-    ToggleIncludeUnstaged,
-    ToggleChangesExpanded,
+    ToggleStagedExpanded,
+    ToggleUnstagedExpanded,
+    StageAll,
+    UnstageAll,
 }
 
 const EDITOR_FONT_SIZE: f32 = 12.;
@@ -56,12 +59,18 @@ const LOADING_LABEL: &str = "Committing\u{2026}";
 
 pub struct CommitState {
     pub(super) intent: CommitChainMode,
-    include_unstaged: bool,
-    file_changes: Vec<FileChangeEntry>,
-    changes_expanded: bool,
-    switch_state: SwitchStateHandle,
-    summary_mouse_state: MouseStateHandle,
-    changes_scroll_state: ClippedScrollStateHandle,
+    /// Staged files (index vs HEAD). For remote repos holds the whole synced set instead; `unstaged_file_changes` stays empty.
+    staged_file_changes: Vec<FileChangeEntry>,
+    /// Unstaged files (working tree vs index, plus untracked). Always empty for remote repos.
+    unstaged_file_changes: Vec<FileChangeEntry>,
+    staged_expanded: bool,
+    unstaged_expanded: bool,
+    staged_summary_mouse_state: MouseStateHandle,
+    unstaged_summary_mouse_state: MouseStateHandle,
+    staged_scroll_state: ClippedScrollStateHandle,
+    unstaged_scroll_state: ClippedScrollStateHandle,
+    stage_all_button: ViewHandle<ActionButton>,
+    unstage_all_button: ViewHandle<ActionButton>,
     pub(super) message_editor: ViewHandle<EditorView>,
     commit_button: ViewHandle<ActionButton>,
     commit_and_push_button: ViewHandle<ActionButton>,
@@ -162,19 +171,37 @@ pub(super) fn new_state(
         None
     };
 
-    let include_unstaged = true;
-    // Local repos load the changes list from the working tree here; remote
-    // repos source the Changes box from synced metadata.
+    let stage_all_button = ctx.add_typed_action_view(|_ctx| {
+        ActionButton::new("Stage All", NakedTheme)
+            .with_size(ButtonSize::Small)
+            .on_click(|ctx| {
+                ctx.dispatch_typed_action(GitDialogAction::Commit(CommitSubAction::StageAll));
+            })
+    });
+    let unstage_all_button = ctx.add_typed_action_view(|_ctx| {
+        ActionButton::new("Unstage All", NakedTheme)
+            .with_size(ButtonSize::Small)
+            .on_click(|ctx| {
+                ctx.dispatch_typed_action(GitDialogAction::Commit(CommitSubAction::UnstageAll));
+            })
+    });
+
+    // Local repos load the staged/unstaged split from the working tree here;
+    // remote repos source the Changes box from synced metadata (see
+    // `refresh_remote_file_changes`).
     if let Some(repo_path) = local_repo_path {
         let repo_path_for_load = repo_path.to_path_buf();
         ctx.spawn(
-            async move { get_file_change_entries(&repo_path_for_load, include_unstaged).await },
+            async move { get_staged_and_unstaged_file_change_entries(&repo_path_for_load).await },
             move |me, result, ctx| {
                 let GitDialogMode::Commit(state) = &mut me.mode else {
                     return;
                 };
                 match result {
-                    Ok(entries) => state.file_changes = entries,
+                    Ok(changes) => {
+                        state.staged_file_changes = changes.staged;
+                        state.unstaged_file_changes = changes.unstaged;
+                    }
                     Err(err) => log::warn!("Failed to load file changes: {err}"),
                 }
                 me.refresh_confirm_enabled(ctx);
@@ -185,12 +212,16 @@ pub(super) fn new_state(
 
     let state = CommitState {
         intent,
-        include_unstaged,
-        file_changes: Vec::new(),
-        changes_expanded: true,
-        switch_state: SwitchStateHandle::default(),
-        summary_mouse_state: MouseStateHandle::default(),
-        changes_scroll_state: ClippedScrollStateHandle::default(),
+        staged_file_changes: Vec::new(),
+        unstaged_file_changes: Vec::new(),
+        staged_expanded: true,
+        unstaged_expanded: true,
+        staged_summary_mouse_state: MouseStateHandle::default(),
+        unstaged_summary_mouse_state: MouseStateHandle::default(),
+        staged_scroll_state: ClippedScrollStateHandle::default(),
+        unstaged_scroll_state: ClippedScrollStateHandle::default(),
+        stage_all_button,
+        unstage_all_button,
         message_editor,
         commit_button,
         commit_and_push_button,
@@ -212,17 +243,9 @@ pub(super) fn is_ready_to_confirm(state: &CommitState, app: &AppContext) -> bool
     has_committable_changes(state) && commit_message(state, app).is_some()
 }
 
-/// Whether there's at least one change to commit — the guard that keeps
-/// Confirm disabled when there's nothing to commit.
-///
-/// Gates on `file_changes`, which already reflects the active "include
-/// unstaged" scope: local re-reads the working tree on toggle, while remote
-/// shows the full synced set (it can't re-scope client-side). The daemon-side
-/// `run_commit` is the authoritative backstop that rejects an empty commit —
-/// e.g. "exclude unstaged" with nothing staged — surfacing it as an error
-/// toast rather than a phantom success.
+/// Whether there's anything staged or unstaged to commit — `start_confirm` auto-stages everything when nothing is explicitly staged, so either counts.
 fn has_committable_changes(state: &CommitState) -> bool {
-    !state.file_changes.is_empty()
+    !state.staged_file_changes.is_empty() || !state.unstaged_file_changes.is_empty()
 }
 
 /// Returns a tooltip to show on the disabled Confirm button when the
@@ -284,11 +307,11 @@ pub(super) fn maybe_start_commit_message_autogen(me: &GitDialog, ctx: &mut ViewC
     if !should_send_git_ops_ai_request(ctx) {
         return;
     }
-    // Generate from the same scope that will be committed (the "include
-    // unstaged" toggle), so the message describes what `run_commit` stages
-    // rather than always assuming the full working set.
+    // Mirrors `start_confirm`'s smart-commit fallback, so the message describes what will actually be committed.
     let include_unstaged = match me.mode() {
-        GitDialogMode::Commit(state) => state.include_unstaged,
+        GitDialogMode::Commit(state) => {
+            me.repo_location().is_remote() || state.staged_file_changes.is_empty()
+        }
         _ => return,
     };
     let branch_name = me.branch_name().to_string();
@@ -297,11 +320,7 @@ pub(super) fn maybe_start_commit_message_autogen(me: &GitDialog, ctx: &mut ViewC
     });
 }
 
-/// Sources the commit Changes box from synced metadata (`against_head.files`).
-/// Remote repos can't read the working tree, so the list comes from metadata
-/// instead of `get_file_change_entries`. No-op for local repos, which load it
-/// from the working tree in `new_state` (and re-scope it on the unstaged
-/// toggle). Safe to call on open and on every metadata refresh.
+/// Sources the commit Changes box from synced metadata for remote repos, which can't distinguish staged from unstaged; shown as "staged" and committed as-is. No-op for local repos.
 pub(super) fn refresh_remote_file_changes(me: &mut GitDialog, ctx: &mut ViewContext<GitDialog>) {
     if !me.repo_location().is_remote() {
         return;
@@ -313,7 +332,7 @@ pub(super) fn refresh_remote_file_changes(me: &mut GitDialog, ctx: &mut ViewCont
         let GitDialogMode::Commit(state) = me.mode_mut() else {
             return;
         };
-        state.file_changes = entries;
+        state.staged_file_changes = entries;
     }
     me.refresh_confirm_enabled(ctx);
     ctx.notify();
@@ -338,26 +357,53 @@ pub(super) fn handle_sub_action(
                 apply_intent_selector(state, ctx);
             }
         }
-        CommitSubAction::ToggleIncludeUnstaged => {
+        CommitSubAction::ToggleStagedExpanded => {
             if let GitDialogMode::Commit(state) = me.mode_mut() {
-                state.include_unstaged = !state.include_unstaged;
-            }
-            // Local re-reads the working tree scoped to the new toggle (its
-            // spawn callback re-evaluates Confirm when it lands). Remote can't
-            // re-scope its synced list, so it keeps showing the full set; the
-            // daemon-side commit is the backstop that rejects an empty staged
-            // set when unstaged is excluded.
-            reload_file_changes(me, ctx);
-            me.refresh_confirm_enabled(ctx);
-            ctx.notify();
-        }
-        CommitSubAction::ToggleChangesExpanded => {
-            if let GitDialogMode::Commit(state) = me.mode_mut() {
-                state.changes_expanded = !state.changes_expanded;
+                state.staged_expanded = !state.staged_expanded;
             }
             ctx.notify();
         }
+        CommitSubAction::ToggleUnstagedExpanded => {
+            if let GitDialogMode::Commit(state) = me.mode_mut() {
+                state.unstaged_expanded = !state.unstaged_expanded;
+            }
+            ctx.notify();
+        }
+        CommitSubAction::StageAll => run_stage_all(me, ctx),
+        CommitSubAction::UnstageAll => run_unstage_all(me, ctx),
     }
+}
+
+/// Stages every change (`git add -A`), then reloads the staged/unstaged split.
+fn run_stage_all(me: &mut GitDialog, ctx: &mut ViewContext<GitDialog>) {
+    let Some(repo_path) = me.repo_location().to_local_path().map(Path::to_path_buf) else {
+        return;
+    };
+    ctx.spawn(
+        async move { stage_all(&repo_path).await },
+        |me, result, ctx| {
+            if let Err(err) = result {
+                log::warn!("Failed to stage all changes: {err}");
+            }
+            reload_file_changes(me, ctx);
+        },
+    );
+}
+
+/// Unstages everything (`git restore --staged .`), then reloads the staged/unstaged split.
+fn run_unstage_all(me: &mut GitDialog, ctx: &mut ViewContext<GitDialog>) {
+    let Some(repo_path) = me.repo_location().to_local_path().map(Path::to_path_buf) else {
+        return;
+    };
+    ctx.spawn(
+        async move { unstage_all(&repo_path).await },
+        |me, result, ctx| {
+            if let Err(err) = result {
+                log::warn!("Failed to unstage all changes: {err}");
+            }
+            reload_file_changes(me, ctx);
+        },
+    );
 }
 
 pub(super) fn start_confirm(me: &mut GitDialog, ctx: &mut ViewContext<GitDialog>) {
@@ -371,7 +417,8 @@ pub(super) fn start_confirm(me: &mut GitDialog, ctx: &mut ViewContext<GitDialog>
         return;
     };
     let intent = state.intent;
-    let include_unstaged = state.include_unstaged;
+    // Smart-commit fallback: stage everything if nothing's staged yet. Remote always includes everything.
+    let include_unstaged = me.repo_location().is_remote() || state.staged_file_changes.is_empty();
     let message_editor = state.message_editor.clone();
     let branch_name = me.branch_name().to_string();
     // When the chain includes create-PR, AI-generate the PR title/body when the
@@ -474,17 +521,14 @@ fn reload_file_changes(me: &mut GitDialog, ctx: &mut ViewContext<GitDialog>) {
     let Some(repo_path) = me.repo_location().to_local_path().map(Path::to_path_buf) else {
         return;
     };
-    let include_unstaged = match me.mode() {
-        GitDialogMode::Commit(state) => state.include_unstaged,
-        _ => return,
-    };
     ctx.spawn(
-        async move { get_file_change_entries(&repo_path, include_unstaged).await },
+        async move { get_staged_and_unstaged_file_change_entries(&repo_path).await },
         |me, result, ctx| {
             if let GitDialogMode::Commit(state) = &mut me.mode {
                 match result {
-                    Ok(entries) => {
-                        state.file_changes = entries;
+                    Ok(changes) => {
+                        state.staged_file_changes = changes.staged;
+                        state.unstaged_file_changes = changes.unstaged;
                         me.refresh_confirm_enabled(ctx);
                         ctx.notify();
                     }
@@ -508,12 +552,13 @@ fn commit_message(state: &CommitState, app: &AppContext) -> Option<String> {
 pub(super) fn render_body(
     state: &CommitState,
     branch_name: &str,
+    is_remote: bool,
     app: &AppContext,
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
 
     let branch_section = render_branch_section(branch_name, appearance);
-    let changes_section = render_changes_section(state, appearance);
+    let changes_section = render_changes_section(state, is_remote, appearance);
     let message_section = render_message_editor(state, appearance, app);
     let intent_section = render_intent_buttons(state);
 
@@ -537,64 +582,105 @@ pub(super) fn render_body(
         .finish()
 }
 
-fn render_changes_section(state: &CommitState, appearance: &Appearance) -> Box<dyn Element> {
+/// Renders the Changes area: local repos get a Staged/Unstaged split with Stage All/Unstage All; remote repos keep a single box.
+fn render_changes_section(
+    state: &CommitState,
+    is_remote: bool,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    if is_remote {
+        return render_changes_group(
+            "Changes",
+            &state.staged_file_changes,
+            state.staged_expanded,
+            &state.staged_summary_mouse_state,
+            &state.staged_scroll_state,
+            GitDialogAction::Commit(CommitSubAction::ToggleStagedExpanded),
+            None,
+            appearance,
+        );
+    }
+
+    let unstage_all_button = (!state.staged_file_changes.is_empty())
+        .then(|| ChildView::new(&state.unstage_all_button).finish());
+    let stage_all_button = (!state.unstaged_file_changes.is_empty())
+        .then(|| ChildView::new(&state.stage_all_button).finish());
+
+    Flex::column()
+        .with_child(
+            Container::new(render_changes_group(
+                "Staged Changes",
+                &state.staged_file_changes,
+                state.staged_expanded,
+                &state.staged_summary_mouse_state,
+                &state.staged_scroll_state,
+                GitDialogAction::Commit(CommitSubAction::ToggleStagedExpanded),
+                unstage_all_button,
+                appearance,
+            ))
+            .with_margin_bottom(12.)
+            .finish(),
+        )
+        .with_child(render_changes_group(
+            "Changes",
+            &state.unstaged_file_changes,
+            state.unstaged_expanded,
+            &state.unstaged_summary_mouse_state,
+            &state.unstaged_scroll_state,
+            GitDialogAction::Commit(CommitSubAction::ToggleUnstagedExpanded),
+            stage_all_button,
+            appearance,
+        ))
+        .finish()
+}
+
+/// One labeled, collapsible changes box with an optional header action button.
+#[allow(clippy::too_many_arguments)]
+fn render_changes_group(
+    label: &str,
+    file_changes: &[FileChangeEntry],
+    expanded: bool,
+    summary_mouse_state: &MouseStateHandle,
+    scroll_state: &ClippedScrollStateHandle,
+    on_toggle: GitDialogAction,
+    header_button: Option<Box<dyn Element>>,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
     let theme = appearance.theme();
     let main_color = theme.main_text_color(theme.surface_1()).into_solid();
-    let sub_color = theme.sub_text_color(theme.surface_1()).into_solid();
 
-    let changes_label = Text::new(
-        "Changes",
+    let label_text = Text::new(
+        label.to_string(),
         appearance.ui_font_family(),
         appearance.ui_font_size(),
     )
     .with_color(main_color)
     .finish();
 
-    let include_label = Text::new(
-        "Include unstaged",
-        appearance.ui_font_family(),
-        appearance.ui_font_size(),
-    )
-    .with_color(sub_color)
-    .finish();
-
-    let switch = appearance
-        .ui_builder()
-        .switch(state.switch_state.clone())
-        .check(state.include_unstaged)
-        .build()
-        .on_click(move |ctx, _, _| {
-            ctx.dispatch_typed_action(GitDialogAction::Commit(
-                CommitSubAction::ToggleIncludeUnstaged,
-            ));
-        })
-        .finish();
-
-    let toggle_row = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(include_label)
-        .with_child(Container::new(switch).with_margin_left(4.).finish())
-        .finish();
-
-    let header_row = Flex::row()
+    let mut header_row = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(changes_label)
-        .with_child(toggle_row)
-        .finish();
+        .with_child(label_text);
+    if let Some(button) = header_button {
+        header_row.add_child(button);
+    }
 
     let changes_box = render_file_changes_box(
-        &state.file_changes,
-        state.changes_expanded,
-        &state.summary_mouse_state,
-        &state.changes_scroll_state,
-        GitDialogAction::Commit(CommitSubAction::ToggleChangesExpanded),
+        file_changes,
+        expanded,
+        summary_mouse_state,
+        scroll_state,
+        on_toggle,
         appearance,
     );
 
     Flex::column()
-        .with_child(Container::new(header_row).with_margin_bottom(8.).finish())
+        .with_child(
+            Container::new(header_row.finish())
+                .with_margin_bottom(8.)
+                .finish(),
+        )
         .with_child(changes_box)
         .finish()
 }

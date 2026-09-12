@@ -26,7 +26,7 @@ use crate::appearance::Appearance;
 use crate::settings::{AppEditorSettings, CodeEditorLineNumberMode, CodeSettings};
 use crate::terminal::general_settings::GeneralSettings;
 use crate::view_components::{Dropdown, DropdownItem};
-use crate::workspace::tab_settings::TabSettings;
+use crate::workspace::tab_settings::{CodeReviewPanelPosition, TabSettings};
 use crate::{TelemetryEvent, send_telemetry_from_ctx};
 
 const PAGE_TITLE: &str = "Editor and Code Review";
@@ -36,6 +36,7 @@ pub struct EditorAndCodeReviewPageView {
     #[cfg(feature = "local_fs")]
     external_editor_view: Option<ViewHandle<ExternalEditorView>>,
     code_editor_line_number_mode_dropdown: ViewHandle<Dropdown<EditorAndCodeReviewPageAction>>,
+    code_review_panel_position_dropdown: ViewHandle<Dropdown<EditorAndCodeReviewPageAction>>,
 }
 
 impl EditorAndCodeReviewPageView {
@@ -57,11 +58,26 @@ impl EditorAndCodeReviewPageView {
             ctx.notify();
         });
 
+        let code_review_panel_position_dropdown = ctx.add_typed_action_view(Dropdown::new);
+        Self::update_code_review_panel_position_dropdown(
+            code_review_panel_position_dropdown.clone(),
+            ctx,
+        );
+
+        ctx.subscribe_to_model(&TabSettings::handle(ctx), |me, _, _, ctx| {
+            Self::update_code_review_panel_position_dropdown(
+                me.code_review_panel_position_dropdown.clone(),
+                ctx,
+            );
+            ctx.notify();
+        });
+
         Self {
             page: Self::build_page(ctx),
             #[cfg(feature = "local_fs")]
             external_editor_view,
             code_editor_line_number_mode_dropdown,
+            code_review_panel_position_dropdown,
         }
     }
 
@@ -84,6 +100,7 @@ impl EditorAndCodeReviewPageView {
                 as Box<dyn SettingsWidget<View = Self>>,
             Box::new(CodeReviewPanelToggleWidget::default()),
             Box::new(CodeReviewDiffStatsToggleWidget::default()),
+            Box::new(CodeReviewPanelPositionWidget::default()),
             Box::new(ProjectExplorerToggleWidget::default()),
             Box::new(GlobalSearchToggleWidget::default()),
             Box::new(ShowHiddenFilesToggleWidget::default()),
@@ -128,6 +145,36 @@ impl EditorAndCodeReviewPageView {
             dropdown.set_selected_by_index(selected_index, ctx);
         });
     }
+
+    fn update_code_review_panel_position_dropdown(
+        dropdown: ViewHandle<Dropdown<EditorAndCodeReviewPageAction>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        dropdown.update(ctx, |dropdown, ctx| {
+            let values = [CodeReviewPanelPosition::Right, CodeReviewPanelPosition::Left];
+
+            let current_value = *TabSettings::as_ref(ctx).code_review_panel_position.value();
+
+            let selected_index = values
+                .iter()
+                .position(|val| *val == current_value)
+                .unwrap_or(0);
+
+            dropdown.set_items(
+                values
+                    .into_iter()
+                    .map(|val| {
+                        DropdownItem::new(
+                            val.dropdown_item_label(),
+                            EditorAndCodeReviewPageAction::SetCodeReviewPanelPosition(val),
+                        )
+                    })
+                    .collect(),
+                ctx,
+            );
+            dropdown.set_selected_by_index(selected_index, ctx);
+        });
+    }
 }
 
 impl Entity for EditorAndCodeReviewPageView {
@@ -156,6 +203,7 @@ pub enum EditorAndCodeReviewPageAction {
     ToggleFormatOnSave,
     ToggleAutoSave,
     SetCodeEditorLineNumberMode(CodeEditorLineNumberMode),
+    SetCodeReviewPanelPosition(CodeReviewPanelPosition),
 }
 
 impl TypedActionView for EditorAndCodeReviewPageView {
@@ -243,6 +291,23 @@ impl TypedActionView for EditorAndCodeReviewPageView {
                     TelemetryEvent::FeaturesPageAction {
                         action: "SetCodeEditorLineNumberMode".to_string(),
                         value: format!("{mode:?}"),
+                    },
+                    ctx
+                );
+            }
+            EditorAndCodeReviewPageAction::SetCodeReviewPanelPosition(position) => {
+                TabSettings::handle(ctx).update(ctx, |tab_settings, ctx| {
+                    report_if_error!(
+                        tab_settings
+                            .code_review_panel_position
+                            .set_value(*position, ctx)
+                    );
+                    ctx.notify();
+                });
+                send_telemetry_from_ctx!(
+                    TelemetryEvent::FeaturesPageAction {
+                        action: "SetCodeReviewPanelPosition".to_string(),
+                        value: format!("{position:?}"),
                     },
                     ctx
                 );
@@ -725,6 +790,34 @@ impl SettingsWidget for CodeEditorLineNumberModeWidget {
             LocalOnlyIconState::Hidden,
             None,
             &view.code_editor_line_number_mode_dropdown,
+        )
+    }
+}
+
+#[derive(Default)]
+struct CodeReviewPanelPositionWidget {}
+
+impl SettingsWidget for CodeReviewPanelPositionWidget {
+    type View = EditorAndCodeReviewPageView;
+
+    fn search_terms(&self) -> &str {
+        "code review panel position left right side dock activity bar project explorer"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        _app: &AppContext,
+    ) -> Box<dyn Element> {
+        render_dropdown_item(
+            appearance,
+            "Code review panel position:",
+            None,
+            None,
+            LocalOnlyIconState::Hidden,
+            None,
+            &view.code_review_panel_position_dropdown,
         )
     }
 }

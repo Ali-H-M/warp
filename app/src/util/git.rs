@@ -265,19 +265,14 @@ pub struct FileChangeEntry {
     pub deletions: usize,
 }
 
-/// Returns per-file change entries. When `include_unstaged` is true, returns all
-/// uncommitted changes (staged + unstaged + untracked) vs HEAD; otherwise only staged changes.
-#[cfg(feature = "local_fs")]
-pub async fn get_file_change_entries(
-    repo_path: &Path,
-    include_unstaged: bool,
-) -> Result<Vec<FileChangeEntry>> {
-    let args: &[&str] = if include_unstaged {
-        &["diff", "--numstat", "HEAD"]
-    } else {
-        &["diff", "--cached", "--numstat"]
-    };
-    let output = run_git_command(repo_path, args).await.unwrap_or_default();
+/// Staged (index vs HEAD) and unstaged (working tree vs index, plus untracked files) changes as two separate lists; a partially-staged file appears in both.
+#[derive(Debug, Clone, Default)]
+pub struct StagedAndUnstagedFileChanges {
+    pub staged: Vec<FileChangeEntry>,
+    pub unstaged: Vec<FileChangeEntry>,
+}
+
+fn parse_numstat_entries(output: &str) -> Vec<FileChangeEntry> {
     let mut entries = Vec::new();
     for line in output.lines() {
         if line.is_empty() {
@@ -292,18 +287,34 @@ pub async fn get_file_change_entries(
             });
         }
     }
+    entries
+}
 
-    // Also include untracked files when showing all changes.
-    if include_unstaged
-        && let Ok(untracked) =
-            run_git_command(repo_path, &["ls-files", "--others", "--exclude-standard"]).await
+/// Returns the staged and unstaged file lists separately; untracked files are included in `unstaged`.
+#[cfg(feature = "local_fs")]
+pub async fn get_staged_and_unstaged_file_change_entries(
+    repo_path: &Path,
+) -> Result<StagedAndUnstagedFileChanges> {
+    let staged_output = run_git_command(repo_path, &["diff", "--cached", "--numstat"])
+        .await
+        .unwrap_or_default();
+    let staged = parse_numstat_entries(&staged_output);
+
+    // `git diff --numstat` (no ref) is working tree vs index, i.e. unstaged.
+    let unstaged_output = run_git_command(repo_path, &["diff", "--numstat"])
+        .await
+        .unwrap_or_default();
+    let mut unstaged = parse_numstat_entries(&unstaged_output);
+
+    if let Ok(untracked) =
+        run_git_command(repo_path, &["ls-files", "--others", "--exclude-standard"]).await
     {
         for file_name in untracked.lines() {
             if file_name.is_empty() {
                 continue;
             }
             let additions = count_lines_if_text_file(&repo_path.join(file_name)) as usize;
-            entries.push(FileChangeEntry {
+            unstaged.push(FileChangeEntry {
                 path: file_name.to_string(),
                 additions,
                 deletions: 0,
@@ -311,24 +322,78 @@ pub async fn get_file_change_entries(
         }
     }
 
-    Ok(entries)
+    Ok(StagedAndUnstagedFileChanges { staged, unstaged })
 }
 
 #[cfg(not(feature = "local_fs"))]
-pub async fn get_file_change_entries(
+pub async fn get_staged_and_unstaged_file_change_entries(
     _repo_path: &Path,
-    _include_unstaged: bool,
-) -> Result<Vec<FileChangeEntry>> {
+) -> Result<StagedAndUnstagedFileChanges> {
+    Err(anyhow!("Not supported on wasm"))
+}
+
+/// Stages the given paths (`git add --`).
+#[cfg(feature = "local_fs")]
+pub async fn stage_paths(repo_path: &Path, paths: &[String]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args: Vec<&str> = vec!["add", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    run_git_command(repo_path, &args).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub async fn stage_paths(_repo_path: &Path, _paths: &[String]) -> Result<()> {
+    Err(anyhow!("Not supported on wasm"))
+}
+
+/// Unstages the given paths without touching the working tree (`git restore --staged --`).
+#[cfg(feature = "local_fs")]
+pub async fn unstage_paths(repo_path: &Path, paths: &[String]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args: Vec<&str> = vec!["restore", "--staged", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    run_git_command(repo_path, &args).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub async fn unstage_paths(_repo_path: &Path, _paths: &[String]) -> Result<()> {
+    Err(anyhow!("Not supported on wasm"))
+}
+
+/// Stages all changes, tracked and untracked (`git add -A`).
+#[cfg(feature = "local_fs")]
+pub async fn stage_all(repo_path: &Path) -> Result<()> {
+    run_git_command(repo_path, &["add", "-A"]).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub async fn stage_all(_repo_path: &Path) -> Result<()> {
+    Err(anyhow!("Not supported on wasm"))
+}
+
+/// Unstages everything without touching the working tree (`git restore --staged .`).
+#[cfg(feature = "local_fs")]
+pub async fn unstage_all(repo_path: &Path) -> Result<()> {
+    run_git_command(repo_path, &["restore", "--staged", "."]).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub async fn unstage_all(_repo_path: &Path) -> Result<()> {
     Err(anyhow!("Not supported on wasm"))
 }
 
 /// Returns per-file change entries for the **committed** branch diff
 /// (`merge_base(HEAD, main)..HEAD`) — exactly what an opened PR would contain.
 ///
-/// Unlike [`get_file_change_entries`] and the `against_base_branch` metadata
-/// which diff the working tree against the merge base and append untracked files,
-/// this only includes committed changes. The base is the detected main branch,
-/// matching the `--base` that [`create_pr`] targets.
+/// Unlike [`get_staged_and_unstaged_file_change_entries`], this only includes committed changes, diffed against the detected main branch (matching the `--base` [`create_pr`] targets).
 ///
 /// Returns an empty list when the merge base can't be resolved (e.g. no commits
 /// yet, or the branch shares no history with main).
@@ -359,7 +424,7 @@ pub async fn get_committed_branch_file_entries(repo_path: &Path) -> Result<Vec<F
             entries.push(FileChangeEntry {
                 path: parts[2].to_string(),
                 // Binary files render as "-\t-\t<path>"; parse failures fall back
-                // to 0, mirroring `get_file_change_entries`.
+                // to 0, mirroring `parse_numstat_entries`.
                 additions: parts[0].parse().unwrap_or(0),
                 deletions: parts[1].parse().unwrap_or(0),
             });
@@ -583,7 +648,7 @@ pub async fn get_diff_for_commit_message(
 
     // `git diff HEAD` only shows changes to already-tracked files. New files that
     // haven't been staged yet are invisible to it, so we synthesise diff hunks for
-    // them here — mirroring the logic in `get_file_change_entries`.
+    // them here — mirroring the logic in `get_staged_and_unstaged_file_change_entries`.
     if include_unstaged
         && let Ok(untracked) = run_git_command(
             repo_path,

@@ -151,8 +151,8 @@ use super::rewind_confirmation_dialog::{
     RewindConfirmationDialog, RewindConfirmationEvent, RewindDialogSource,
 };
 use super::tab_settings::{
-    HeaderToolbarChipSelection, NewTabPlacement, TabSettings, TabSettingsChangedEvent,
-    VerticalTabsDisplayGranularity, WorkspaceDecorationVisibility,
+    CodeReviewPanelPosition, HeaderToolbarChipSelection, NewTabPlacement, TabSettings,
+    TabSettingsChangedEvent, VerticalTabsDisplayGranularity, WorkspaceDecorationVisibility,
 };
 use super::util::{
     PaneViewLocator, TabMovement, TerminalSessionFallbackBehavior, WelcomeTipsViewState,
@@ -3114,9 +3114,22 @@ impl Workspace {
 
         let left_panel_views = Self::compute_left_panel_views(ctx);
 
+        let right_panel_view = ctx.add_typed_action_view(|ctx| {
+            RightPanelView::new(working_directories_model.clone(), ctx)
+        });
+        ctx.subscribe_to_view(&right_panel_view, |me, _, event, ctx| {
+            me.handle_right_panel_event(event.clone(), ctx);
+        });
+        let code_review_hosted_in_left_panel =
+            *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left;
+        right_panel_view.update(ctx, |view, ctx| {
+            view.set_hosted_in_left_panel(code_review_hosted_in_left_panel, ctx);
+        });
+
         let left_panel_view = ctx.add_typed_action_view(|ctx| {
             LeftPanelView::new(
                 working_directories_model.clone(),
+                right_panel_view.clone(),
                 left_panel_views.clone(),
                 ctx,
             )
@@ -3124,13 +3137,6 @@ impl Workspace {
 
         ctx.subscribe_to_view(&left_panel_view, |me, _, event, ctx| {
             me.handle_left_panel_event(event, ctx);
-        });
-
-        let right_panel_view = ctx.add_typed_action_view(|ctx| {
-            RightPanelView::new(working_directories_model.clone(), ctx)
-        });
-        ctx.subscribe_to_view(&right_panel_view, |me, _, event, ctx| {
-            me.handle_right_panel_event(event.clone(), ctx);
         });
 
         // Get persisted filters from window snapshot if restoring.
@@ -3876,6 +3882,11 @@ impl Workspace {
                 ctx.notify();
             }
             TabSettingsChangedEvent::ShowCodeReviewDiffStats { .. } => {
+                ctx.notify();
+            }
+            TabSettingsChangedEvent::CodeReviewPanelPosition { .. } => {
+                self.update_left_panel_available_views(ctx);
+                self.sync_code_review_panel_hosting(ctx);
                 ctx.notify();
             }
             TabSettingsChangedEvent::DirectoryTabColors { .. } => {
@@ -6167,6 +6178,14 @@ impl Workspace {
         });
     }
 
+    fn sync_code_review_panel_hosting(&mut self, ctx: &mut ViewContext<Self>) {
+        let hosted_in_left_panel =
+            *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left;
+        self.right_panel_view.update(ctx, |view, ctx| {
+            view.set_hosted_in_left_panel(hosted_in_left_panel, ctx);
+        });
+    }
+
     fn build_header_toolbar_context_menu(
         ctx: &mut ViewContext<Self>,
     ) -> ViewHandle<Menu<WorkspaceAction>> {
@@ -6696,7 +6715,49 @@ impl Workspace {
                     modal.start_sign_in(ctx);
                 });
             }
+            LeftPanelEvent::CodeReviewSelected => {
+                self.open_code_review_from_left_panel(ctx);
+            }
         }
+    }
+
+    fn open_code_review_from_left_panel(&mut self, ctx: &mut ViewContext<Self>) {
+        let pane_group_handle = self.active_tab_pane_group().clone();
+        if pane_group_handle.as_ref(ctx).right_panel_open {
+            return;
+        }
+
+        let read_result = pane_group_handle.read(ctx, |pane_group, ctx| {
+            pane_group.active_session_view(ctx).map(|terminal_view| {
+                let repo_path = terminal_view.as_ref(ctx).current_repo_path().cloned();
+                let preferred_session = terminal_view.as_ref(ctx).active_block_session_id();
+                (repo_path, preferred_session)
+            })
+        });
+        let context = read_result.and_then(
+            |(repo_path, preferred_session): (Option<LocalOrRemotePath>, Option<SessionId>)| {
+                let diff_state_model = repo_path.as_ref().and_then(|rp| {
+                    self.working_directories_model.update(ctx, |model, ctx| {
+                        model.get_or_create_diff_state_model(rp.clone(), preferred_session, ctx)
+                    })
+                })?;
+                Some(CodeReviewPaneContext {
+                    repo_path,
+                    diff_state_model,
+                })
+            },
+        );
+
+        self.update_right_panel_open_state(
+            RightPanelUpdateParams {
+                pane_group: &pane_group_handle,
+                target_open_state: true,
+                entrypoint: Some(CodeReviewPaneEntrypoint::RightPanel),
+                cli_agent: None,
+                review_pane_context: context.as_ref(),
+            },
+            ctx,
+        );
     }
 
     fn handle_right_panel_event(&mut self, event: RightPanelEvent, ctx: &mut ViewContext<Self>) {
@@ -9720,6 +9781,17 @@ impl Workspace {
                 view.close_code_review(ctx);
             }
         });
+
+        if should_open
+            && *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left
+        {
+            panel_update_params.pane_group.update(ctx, |pane_group, _| {
+                pane_group.left_panel_open = true;
+            });
+            self.left_panel_view.update(ctx, |view, ctx| {
+                view.select_code_review_tab(ctx);
+            });
+        }
 
         if should_open {
             #[cfg(feature = "local_fs")]
@@ -22920,10 +22992,12 @@ impl Workspace {
                 Some(ChildView::new(&self.left_panel_view).finish())
             }
             HeaderToolbarItemKind::CodeReview => {
-                if !pane_group.right_panel_open {
+                if *TabSettings::as_ref(app).code_review_panel_position
+                    == CodeReviewPanelPosition::Left
+                {
                     return None;
                 }
-                if pane_group.is_right_panel_maximized {
+                if !pane_group.right_panel_open || pane_group.is_right_panel_maximized {
                     return None;
                 }
                 Some(ChildView::new(&self.right_panel_view).finish())
@@ -22944,6 +23018,9 @@ impl Workspace {
             return None;
         }
         if !HeaderToolbarItemKind::CodeReview.is_supported(app) {
+            return None;
+        }
+        if *TabSettings::as_ref(app).code_review_panel_position == CodeReviewPanelPosition::Left {
             return None;
         }
         Some(Shrinkable::new(1.0, ChildView::new(&self.right_panel_view).finish()).finish())
@@ -23864,6 +23941,9 @@ impl Workspace {
         }
         if *WarpDriveSettings::as_ref(ctx).enable_warp_drive {
             views.push(ToolPanelView::WarpDrive);
+        }
+        if *TabSettings::as_ref(ctx).code_review_panel_position == CodeReviewPanelPosition::Left {
+            views.push(ToolPanelView::CodeReview);
         }
         views
     }

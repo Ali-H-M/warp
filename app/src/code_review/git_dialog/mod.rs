@@ -767,7 +767,9 @@ impl GitDialog {
     fn render_body(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         match &self.mode {
-            GitDialogMode::Commit(state) => commit::render_body(state, &self.branch_name, app),
+            GitDialogMode::Commit(state) => {
+                commit::render_body(state, &self.branch_name, self.repo_location.is_remote(), app)
+            }
             GitDialogMode::Push(state) => push::render_body(state, &self.branch_name, appearance),
             GitDialogMode::CreatePr(state) => pr::render_body(state, &self.branch_name, appearance),
         }

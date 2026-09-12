@@ -67,9 +67,11 @@ use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
     LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
     OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
-    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_RIGHT_PANEL_BINDING_NAME,
+    TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
 use crate::workspaces::user_workspaces::UserWorkspaces;
+use super::right_panel::RightPanelView;
 
 #[derive(Default)]
 struct MouseStateHandles {
@@ -77,6 +79,7 @@ struct MouseStateHandles {
     conversation_list_view_button: MouseStateHandle,
     global_search_button: MouseStateHandle,
     warp_drive_button: MouseStateHandle,
+    code_review_button: MouseStateHandle,
     sign_in_button: MouseStateHandle,
 }
 
@@ -86,6 +89,7 @@ pub enum LeftPanelAction {
     GlobalSearch { entry_focus: GlobalSearchEntryFocus },
     WarpDrive,
     ConversationListView,
+    CodeReview,
     SignIn,
 }
 
@@ -99,9 +103,9 @@ pub(crate) enum ToolPanelAvailability {
 impl ToolPanelView {
     fn availability(self, app: &AppContext) -> ToolPanelAvailability {
         match self {
-            ToolPanelView::ProjectExplorer | ToolPanelView::GlobalSearch { .. } => {
-                ToolPanelAvailability::Available
-            }
+            ToolPanelView::ProjectExplorer
+            | ToolPanelView::GlobalSearch { .. }
+            | ToolPanelView::CodeReview => ToolPanelAvailability::Available,
             ToolPanelView::WarpDrive => {
                 if WarpDriveSettings::is_warp_drive_available(app) {
                     ToolPanelAvailability::Available
@@ -143,6 +147,8 @@ pub enum LeftPanelEvent {
         terminal_view_id: Option<warpui::EntityId>,
     },
     SignInRequested,
+    /// The user selected the Code Review tab; the workspace should ensure `right_panel_open` is set so review content actually loads.
+    CodeReviewSelected,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,6 +157,8 @@ pub enum ToolPanelView {
     GlobalSearch { entry_focus: GlobalSearchEntryFocus },
     WarpDrive,
     ConversationListView,
+    /// Code review, shown as a left-toolbelt tab when `TabSettings.code_review_panel_position` is `Left`.
+    CodeReview,
 }
 
 /// Encapsulates the active view state to enforce that all mutations go through
@@ -218,6 +226,8 @@ pub struct LeftPanelView {
     close_button_mouse_state: MouseStateHandle,
     warp_drive_view: ViewHandle<DrivePanel>,
     conversation_list_view: ViewHandle<ConversationListView>,
+    /// Shared with the workspace's right-docked slot; used to embed code review content when `ToolPanelView::CodeReview` is active.
+    right_panel_view: ViewHandle<RightPanelView>,
     active_view: active_view_state::ActiveViewState,
     toolbelt_buttons: Vec<ToolbeltButtonConfig>,
     active_pane_group: Option<WeakViewHandle<PaneGroup>>,
@@ -270,11 +280,14 @@ impl LeftPanelView {
             (
                 ToolPanelView::ProjectExplorer
                 | ToolPanelView::GlobalSearch { .. }
-                | ToolPanelView::WarpDrive,
+                | ToolPanelView::WarpDrive
+                | ToolPanelView::CodeReview,
                 ToolPanelAvailability::RequiresAi,
             )
             | (
-                ToolPanelView::ProjectExplorer | ToolPanelView::GlobalSearch { .. },
+                ToolPanelView::ProjectExplorer
+                | ToolPanelView::GlobalSearch { .. }
+                | ToolPanelView::CodeReview,
                 ToolPanelAvailability::RequiresAccount,
             )
             | (_, ToolPanelAvailability::Available) => {
@@ -337,6 +350,7 @@ impl LeftPanelView {
     }
     pub fn new(
         working_directories_model: ModelHandle<WorkingDirectoriesModel>,
+        right_panel_view: ViewHandle<RightPanelView>,
         views: Vec<ToolPanelView>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
@@ -468,6 +482,7 @@ impl LeftPanelView {
             close_button_mouse_state: Default::default(),
             warp_drive_view,
             conversation_list_view,
+            right_panel_view,
             active_view: active_view_state::new(active_view),
             toolbelt_buttons,
             active_pane_group: None,
@@ -492,6 +507,11 @@ impl LeftPanelView {
     ) {
         self.panel_position = position;
         ctx.notify();
+    }
+
+    /// Switches to the Code Review tab without emitting `CodeReviewSelected` (for when the workspace opens it via some other trigger).
+    pub fn select_code_review_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        active_view_state::set(self, ToolPanelView::CodeReview, ctx);
     }
 
     /// Updates the available tool panel views.
@@ -605,6 +625,19 @@ impl LeftPanelView {
                     active_icon: Some(Icon::Conversation),
                     tooltip_text: "Agent conversations".to_string(),
                     action: LeftPanelAction::ConversationListView,
+                    render_with_active_state: false,
+                    tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
+                    tooltip_keybinding_names,
+                }
+            }
+            ToolPanelView::CodeReview => {
+                let tooltip_keybinding_names = vec![TOGGLE_RIGHT_PANEL_BINDING_NAME];
+
+                ToolbeltButtonConfig {
+                    icon: Icon::Diff,
+                    active_icon: None,
+                    tooltip_text: "Code review".to_string(),
+                    action: LeftPanelAction::CodeReview,
                     render_with_active_state: false,
                     tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
                     tooltip_keybinding_names,
@@ -874,6 +907,11 @@ impl LeftPanelView {
                     view.on_left_panel_focused(ctx);
                 });
             }
+            ToolPanelView::CodeReview => {
+                self.right_panel_view.update(ctx, |view, ctx| {
+                    view.focus_active_code_review_view(ctx);
+                });
+            }
         }
     }
 
@@ -1040,6 +1078,7 @@ impl LeftPanelView {
                 LeftPanelAction::ConversationListView => {
                     self.active_view.get() == ToolPanelView::ConversationListView
                 }
+                LeftPanelAction::CodeReview => self.active_view.get() == ToolPanelView::CodeReview,
                 LeftPanelAction::SignIn => false,
             };
         }
@@ -1186,6 +1225,10 @@ impl LeftPanelView {
                     send_telemetry_from_ctx!(TelemetryEvent::ConversationListViewOpened, ctx);
                 }
             }
+            LeftPanelAction::CodeReview => {
+                active_view_state::set(self, ToolPanelView::CodeReview, ctx);
+                ctx.emit(LeftPanelEvent::CodeReviewSelected);
+            }
             LeftPanelAction::SignIn => {
                 ctx.emit(LeftPanelEvent::SignInRequested);
             }
@@ -1294,6 +1337,7 @@ impl View for LeftPanelView {
                 }
                 ToolPanelView::WarpDrive => ctx.focus(&self.warp_drive_view),
                 ToolPanelView::ConversationListView => ctx.focus(&self.conversation_list_view),
+                ToolPanelView::CodeReview => ctx.focus(&self.right_panel_view),
             }
         }
     }
@@ -1308,6 +1352,7 @@ impl View for LeftPanelView {
                 .clone(),
             self.mouse_state_handles.global_search_button.clone(),
             self.mouse_state_handles.warp_drive_button.clone(),
+            self.mouse_state_handles.code_review_button.clone(),
         ];
 
         // If there is only one button in the toolbelt row,
@@ -1372,6 +1417,11 @@ impl View for LeftPanelView {
                     Shrinkable::new(1.0, ChildView::new(&self.conversation_list_view).finish())
                         .finish()
                 }
+                ToolPanelView::CodeReview => Shrinkable::new(
+                    1.0,
+                    self.right_panel_view.as_ref(app).render_embedded_content(app),
+                )
+                .finish(),
             }
         };
 

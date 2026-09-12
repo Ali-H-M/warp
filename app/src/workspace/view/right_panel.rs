@@ -436,6 +436,8 @@ pub struct RightPanelView {
     code_review_session_env: Option<CodeReviewSessionEnv>,
     is_agent_management_view_open: bool,
     panel_position: super::PanelPosition,
+    /// True when embedded in `LeftPanelView`'s Code Review tab instead of this view's own right-docked chrome; suppresses the maximize/close header buttons.
+    hosted_in_left_panel: bool,
 }
 
 impl RightPanelView {
@@ -523,7 +525,21 @@ impl RightPanelView {
             code_review_session_env: None,
             is_agent_management_view_open: false,
             panel_position: super::PanelPosition::Right,
+            hosted_in_left_panel: false,
         }
+    }
+
+    pub fn set_hosted_in_left_panel(&mut self, hosted: bool, ctx: &mut ViewContext<Self>) {
+        if self.hosted_in_left_panel == hosted {
+            return;
+        }
+        self.hosted_in_left_panel = hosted;
+        ctx.notify();
+    }
+
+    /// Renders content only, without the top-level `Resizable`/header chrome `render()` wraps it in. Used by `LeftPanelView`'s Code Review tab.
+    pub fn render_embedded_content(&self, app: &AppContext) -> Box<dyn Element> {
+        self.render_panel_content(app)
     }
 
     pub fn set_agent_management_view_open(&mut self, is_open: bool, ctx: &mut ViewContext<Self>) {
@@ -1013,8 +1029,10 @@ impl RightPanelView {
         if let Some(repo_dropdown) = self.render_repo_dropdown() {
             right_section.push(repo_dropdown);
         }
-        right_section.push(self.render_maximize_pane_button());
-        right_section.push(close_button);
+        if !self.hosted_in_left_panel {
+            right_section.push(self.render_maximize_pane_button());
+            right_section.push(close_button);
+        }
 
         Container::new(
             ConstrainedBox::new(
@@ -1102,8 +1120,10 @@ impl RightPanelView {
         if let Some(repo_dropdown) = self.render_repo_dropdown() {
             right_section.push(repo_dropdown);
         }
-        right_section.push(self.render_maximize_pane_button());
-        right_section.push(close_button);
+        if !self.hosted_in_left_panel {
+            right_section.push(self.render_maximize_pane_button());
+            right_section.push(close_button);
+        }
 
         let left_padding = if has_nav_button { 12. } else { 16. };
 

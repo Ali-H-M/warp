@@ -69,6 +69,48 @@ settings::macros::implement_setting_for_enum!(
     description: "Position of the close button on tabs.",
 );
 
+/// Which side of the window the code review panel is docked to.
+#[derive(
+    Default,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialEq,
+    Copy,
+    Clone,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[schemars(
+    description = "Which side the code review panel is docked to.",
+    rename_all = "snake_case"
+)]
+pub enum CodeReviewPanelPosition {
+    #[default]
+    Right,
+    Left,
+}
+
+impl CodeReviewPanelPosition {
+    pub fn dropdown_item_label(&self) -> &'static str {
+        match self {
+            CodeReviewPanelPosition::Right => "Right",
+            CodeReviewPanelPosition::Left => "Left",
+        }
+    }
+}
+
+settings::macros::implement_setting_for_enum!(
+    CodeReviewPanelPosition,
+    TabSettings,
+    SupportedPlatforms::ALL,
+    SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+    surface: settings::SettingSurfaces::GUI,
+    private: false,
+    toml_path: "code.editor.code_review_panel_position",
+    description: "Which side the code review panel is docked to.",
+);
+
 /// Visibility options for workspace decorations like the tab bar.
 #[derive(
     Clone,
@@ -577,6 +619,7 @@ define_settings_group!(TabSettings, settings: [
     workspace_decoration_visibility: WorkspaceDecorationVisibility,
     close_button_position: TabCloseButtonPosition,
     directory_tab_colors: DirectoryTabColors,
+    code_review_panel_position: CodeReviewPanelPosition,
 ]);
 
 #[cfg(test)]
