@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use settings::macros::define_settings_group;
-use settings::{RespectUserSyncSetting, Setting, SupportedPlatforms, SyncToCloud};
+use settings::{RespectUserSyncSetting, SupportedPlatforms, SyncToCloud};
 use syntax_tree::{ColorMap, DARK_MODERN, LIGHT_MODERN};
 
 #[derive(
