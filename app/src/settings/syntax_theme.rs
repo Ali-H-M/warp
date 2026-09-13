@@ -17,7 +17,11 @@ use syntax_tree::{ColorMap, DARK_MODERN, LIGHT_MODERN};
 )]
 #[schemars(description = "The syntax highlighting color theme.", rename_all = "snake_case")]
 pub enum SyntaxThemeKind {
+    /// Derives syntax colors from the active app color theme's terminal
+    /// palette, matching Warp's original (pre-syntax-theme) behavior.
     #[default]
+    #[schemars(description = "Match App Theme")]
+    MatchAppTheme,
     #[schemars(description = "Dark Modern")]
     DarkModern,
     #[schemars(description = "Light Modern")]
@@ -25,15 +29,17 @@ pub enum SyntaxThemeKind {
 }
 
 impl SyntaxThemeKind {
-    pub fn color_map(self) -> ColorMap {
+    pub fn fixed_color_map(self) -> Option<ColorMap> {
         match self {
-            SyntaxThemeKind::DarkModern => DARK_MODERN,
-            SyntaxThemeKind::LightModern => LIGHT_MODERN,
+            SyntaxThemeKind::MatchAppTheme => None,
+            SyntaxThemeKind::DarkModern => Some(DARK_MODERN),
+            SyntaxThemeKind::LightModern => Some(LIGHT_MODERN),
         }
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
+            SyntaxThemeKind::MatchAppTheme => "Match App Theme",
             SyntaxThemeKind::DarkModern => "Dark Modern",
             SyntaxThemeKind::LightModern => "Light Modern",
         }

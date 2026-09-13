@@ -1302,7 +1302,11 @@ impl AppearanceSettingsPageView {
         let syntax_theme_dropdown = ctx.add_typed_action_view(|ctx| {
             let mut dropdown = Dropdown::new(ctx);
 
-            let values = vec![SyntaxThemeKind::DarkModern, SyntaxThemeKind::LightModern];
+            let values = vec![
+                SyntaxThemeKind::MatchAppTheme,
+                SyntaxThemeKind::DarkModern,
+                SyntaxThemeKind::LightModern,
+            ];
             let current_value = *SyntaxThemeSettings::as_ref(ctx).syntax_theme_kind;
             let selected_index = values
                 .iter()
