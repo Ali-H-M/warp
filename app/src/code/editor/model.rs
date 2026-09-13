@@ -1401,7 +1401,7 @@ impl CodeEditorModel {
     }
 
     fn syntax_highlighting_color_map(ctx: &mut ModelContext<Self>) -> ColorMap {
-        let syntax_theme_kind = SyntaxThemeSettings::as_ref(ctx).syntax_theme_kind;
+        let syntax_theme_kind = *SyntaxThemeSettings::as_ref(ctx).syntax_theme_kind;
         match syntax_theme_kind.fixed_color_map() {
             Some(color_map) => color_map,
             None => {
