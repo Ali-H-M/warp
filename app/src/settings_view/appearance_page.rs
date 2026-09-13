@@ -62,8 +62,8 @@ use crate::settings::{
     CursorDisplayType, DEFAULT_MONOSPACE_FONT_NAME, EnforceMinimumContrast, FocusPaneOnHover,
     FontSettings, FontSettingsChangedEvent, GPUSettings, InputBoxType, InputModeSettings,
     InputModeState, InputSettings, InputSettingsChangedEvent, MonospaceFontName, PaneSettings,
-    ShouldDimInactivePanes, ThemeSettings, UseSystemTheme, UseThinStrokes, active_theme_kind,
-    respect_system_theme,
+    ShouldDimInactivePanes, SyntaxThemeKind, SyntaxThemeSettings, SyntaxThemeSettingsChangedEvent,
+    ThemeSettings, UseSystemTheme, UseThinStrokes, active_theme_kind, respect_system_theme,
 };
 use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::blockgrid_element::BlockGridElement;
@@ -503,6 +503,7 @@ pub enum AppearancePageAction {
     ToggleToolsPanelWarpDrive,
     ToggleToolsPanelConversationHistory,
     SetEnforceMinimumContrast(EnforceMinimumContrast),
+    SetSyntaxTheme(SyntaxThemeKind),
     OpenUrl(String),
     ToggleFocusPaneOnHover,
     ToggleInputMode,
@@ -539,6 +540,7 @@ pub struct AppearanceSettingsPageView {
     #[allow(dead_code)]
     thin_strokes_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     enforce_min_contrast_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
+    syntax_theme_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     input_mode_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     window_backdrop_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     input_type_radio_state: RadioButtonStateHandle,
@@ -611,6 +613,13 @@ impl TypedActionView for AppearanceSettingsPageView {
                         font_settings
                             .enforce_minimum_contrast
                             .set_value(*value, ctx,)
+                    );
+                });
+            }
+            SetSyntaxTheme(value) => {
+                SyntaxThemeSettings::handle(ctx).update(ctx, |syntax_theme_settings, ctx| {
+                    report_if_error!(
+                        syntax_theme_settings.syntax_theme_kind.set_value(*value, ctx)
                     );
                 });
             }
@@ -926,6 +935,20 @@ impl AppearanceSettingsPageView {
                     ctx.notify();
                 }
                 _ => {}
+            },
+        );
+
+        ctx.subscribe_to_model(
+            &SyntaxThemeSettings::handle(ctx),
+            |me, _, event, ctx| match event {
+                SyntaxThemeSettingsChangedEvent::SyntaxTheme { .. } => {
+                    me.syntax_theme_dropdown.update(ctx, |dropdown, ctx| {
+                        let syntax_theme_kind =
+                            *SyntaxThemeSettings::as_ref(ctx).syntax_theme_kind;
+                        dropdown.set_selected_by_name(syntax_theme_kind.display_name(), ctx);
+                    });
+                    ctx.notify();
+                }
             },
         );
 
@@ -1276,6 +1299,39 @@ impl AppearanceSettingsPageView {
             dropdown
         });
 
+        let syntax_theme_dropdown = ctx.add_typed_action_view(|ctx| {
+            let mut dropdown = Dropdown::new(ctx);
+
+            let values = vec![
+                SyntaxThemeKind::MatchAppTheme,
+                SyntaxThemeKind::DarkModern,
+                SyntaxThemeKind::LightModern,
+            ];
+            let current_value = *SyntaxThemeSettings::as_ref(ctx).syntax_theme_kind;
+            let selected_index = values
+                .iter()
+                .position(|val| *val == current_value)
+                .unwrap_or_else(|| {
+                    report_error!("Could not find current SyntaxThemeKind value in dropdown option list");
+                    0
+                });
+
+            dropdown.add_items(
+                values
+                    .into_iter()
+                    .map(|val| {
+                        DropdownItem::new(
+                            val.display_name(),
+                            AppearancePageAction::SetSyntaxTheme(val),
+                        )
+                    })
+                    .collect(),
+                ctx,
+            );
+            dropdown.set_selected_by_index(selected_index, ctx);
+            dropdown
+        });
+
         let context_chips = Self::get_context_chip_renderers(ctx);
 
         let alt_screen_padding_editor = {
@@ -1329,6 +1385,7 @@ impl AppearanceSettingsPageView {
             input_type_radio_state,
             app_icon_dropdown,
             enforce_min_contrast_dropdown,
+            syntax_theme_dropdown,
             workspace_decorations_dropdown: Self::build_workspace_decoration_visibility_dropdown(
                 ctx,
             ),
@@ -1467,6 +1524,7 @@ impl AppearanceSettingsPageView {
             Box::new(TerminalFontWidget::default()),
             Box::new(AIFontWidget::default()),
             Box::new(NotebookFontSizeWidget::default()),
+            Box::new(SyntaxThemeWidget::default()),
         ];
         if font_settings
             .use_thin_strokes
@@ -4619,6 +4677,39 @@ impl SettingsWidget for MinimumContrastWidget {
             ),
             None,
             &view.enforce_min_contrast_dropdown,
+        )
+    }
+}
+
+#[derive(Default)]
+struct SyntaxThemeWidget {}
+
+impl SettingsWidget for SyntaxThemeWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "syntax highlighting code theme"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        render_dropdown_item(
+            appearance,
+            "Syntax highlighting theme",
+            None,
+            None,
+            LocalOnlyIconState::for_setting(
+                crate::settings::SyntaxTheme::storage_key(),
+                crate::settings::SyntaxTheme::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            None,
+            &view.syntax_theme_dropdown,
         )
     }
 }

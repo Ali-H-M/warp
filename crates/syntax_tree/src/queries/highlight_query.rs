@@ -13,13 +13,26 @@ use warpui_core::color::ColorU;
 #[derive(Clone, Copy)]
 pub struct ColorMap {
     pub keyword_color: ColorU,
+    pub keyword_control_color: ColorU,
     pub function_color: ColorU,
+    pub method_color: ColorU,
     pub string_color: ColorU,
-    pub type_color: ColorU,
+    pub escape_color: ColorU,
     pub number_color: ColorU,
+    pub boolean_color: ColorU,
+    pub constant_color: ColorU,
+    pub type_color: ColorU,
+    pub type_builtin_color: ColorU,
     pub comment_color: ColorU,
     pub property_color: ColorU,
+    pub variable_color: ColorU,
+    pub parameter_color: ColorU,
     pub tag_color: ColorU,
+    pub attribute_color: ColorU,
+    pub punctuation_color: ColorU,
+    pub operator_color: ColorU,
+    pub namespace_color: ColorU,
+    pub label_color: ColorU,
 }
 
 /// Query for retrieving syntax highlighting information on the tokens.
@@ -79,23 +92,47 @@ impl HighlightQuery {
 }
 
 fn convert_capture_name_to_color(name: &str, color_map: &ColorMap) -> Option<ColorU> {
+    // Multi-segment names checked here take priority over the first-segment fallback below.
     match name {
         "text.title" => return Some(color_map.keyword_color),
         "text.literal" => return Some(color_map.string_color),
         "text.uri" => return Some(color_map.function_color),
         "text.reference" => return Some(color_map.property_color),
+        "keyword.control" | "keyword.control.conditional" | "keyword.control.repeat"
+        | "keyword.control.return" | "keyword.control.import" | "keyword.control.exception" => {
+            return Some(color_map.keyword_control_color);
+        }
+        "function.method" | "function.method.call" => return Some(color_map.method_color),
+        "string.escape" | "escape" => return Some(color_map.escape_color),
+        "constant.builtin" | "boolean" | "constant.builtin.boolean" => {
+            return Some(color_map.boolean_color);
+        }
+        "type.builtin" => return Some(color_map.type_builtin_color),
+        "variable.parameter" | "parameter" => return Some(color_map.parameter_color),
+        "tag.attribute" | "attribute" => return Some(color_map.attribute_color),
         _ => {}
     }
     match name.split('.').next() {
-        Some("keyword") => Some(color_map.keyword_color),
-        Some("function") => Some(color_map.function_color),
-        Some("string") => Some(color_map.string_color),
-        Some("type") => Some(color_map.type_color),
-        Some("number") => Some(color_map.number_color),
-        Some("comment") => Some(color_map.comment_color),
-        Some("property") => Some(color_map.property_color),
-        Some("tag") => Some(color_map.tag_color),
-        Some("punctuation") => Some(color_map.comment_color),
+        Some("keyword") | Some("storageclass") | Some("preproc") => Some(color_map.keyword_color),
+        Some("conditional") | Some("repeat") | Some("exception") | Some("include")
+        | Some("throw") | Some("try") | Some("catch") | Some("finally") => {
+            Some(color_map.keyword_control_color)
+        }
+        Some("function") | Some("constructor") => Some(color_map.function_color),
+        Some("string") | Some("character") => Some(color_map.string_color),
+        Some("type") | Some("interface") | Some("protocol") | Some("implementation") => {
+            Some(color_map.type_color)
+        }
+        Some("number") | Some("float") => Some(color_map.number_color),
+        Some("constant") => Some(color_map.constant_color),
+        Some("comment") | Some("spell") => Some(color_map.comment_color),
+        Some("property") | Some("field") => Some(color_map.property_color),
+        Some("variable") => Some(color_map.variable_color),
+        Some("tag") | Some("selector") => Some(color_map.tag_color),
+        Some("punctuation") | Some("delimiter") => Some(color_map.punctuation_color),
+        Some("operator") => Some(color_map.operator_color),
+        Some("namespace") | Some("module") => Some(color_map.namespace_color),
+        Some("label") => Some(color_map.label_color),
         _ => None,
     }
 }
@@ -138,3 +175,7 @@ impl<'a> TextProvider<&'a [u8]> for TextBuffer<'a> {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "highlight_query_tests.rs"]
+mod tests;
